@@ -220,15 +220,27 @@ class Sampler:
         self.next_disk_probe = 0.0
         self.prev_disk_operations: tuple[int, int] | None = None
         self.disk_pulse = 0
+        self.next_route_probe = 0.0
+        self.route_ifaces: list[str] = []
+        self.known_interfaces: set[str] | None = None
+        self.next_filesystem_probe = 0.0
+        self.filesystem_usage = 0.0
 
     def snapshot(self) -> dict[str, float | int]:
         stamp = self.now()
         cpu = parse_cpu(self.reader("/proc/stat"))
         ram = ram_percent(self.reader("/proc/meminfo"))
         net = parse_net_dev(self.reader("/proc/net/dev"))
-        routes = parse_default_routes(self.reader("/proc/net/route"))
-        routes += parse_ipv6_default_routes(self.reader("/proc/net/ipv6_route"))
-        ifaces = select_interfaces(routes, net.keys())
+        interfaces = set(net)
+        if stamp >= self.next_route_probe or interfaces != self.known_interfaces:
+            self.route_ifaces = parse_default_routes(self.reader("/proc/net/route"))
+            self.route_ifaces += parse_ipv6_default_routes(self.reader("/proc/net/ipv6_route"))
+            self.next_route_probe = stamp + 5
+            self.known_interfaces = interfaces
+        ifaces = select_interfaces(self.route_ifaces, net.keys())
+        if stamp >= self.next_filesystem_probe:
+            self.filesystem_usage = filesystem_percent()
+            self.next_filesystem_probe = stamp + 30
         rx, tx = sum_bytes(net, ifaces)
         diskstats = self.reader("/proc/diskstats")
         disk_ops = disk_operations(diskstats, self.disk_device)
@@ -271,7 +283,7 @@ class Sampler:
             "ram": round(ram, 2),
             "down": round(down_pct, 2),
             "up": round(up_pct, 2),
-            "disk": round(filesystem_percent(), 2),
+            "disk": round(self.filesystem_usage, 2),
             "diskPulse": self.disk_pulse,
         }
 

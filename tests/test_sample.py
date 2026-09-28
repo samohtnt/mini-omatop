@@ -6,6 +6,7 @@ import stat
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -155,6 +156,53 @@ class ParseTests(unittest.TestCase):
         for raw in ("nan", "inf", "-1", "0", "1e308"):
             with self.assertRaises(argparse.ArgumentTypeError):
                 sample.interval_seconds(raw)
+
+
+class CacheTests(unittest.TestCase):
+    def test_cache_expiry_and_live_counters(self):
+        clock = [0.0]
+        reads = []
+        files = {"/proc/net/dev": NET_DEV, "/proc/net/route": ROUTE,
+                 "/proc/stat": STAT_IDLE, "/proc/meminfo": MEMINFO}
+        def reader(path):
+            reads.append(path)
+            return files.get(path, "")
+        with patch.object(sample, "filesystem_percent", side_effect=[20, 30]) as fs:
+            sampler = sample.Sampler(reader=reader, now=lambda: clock[0])
+            self.assertEqual(sampler.snapshot()["disk"], 20)
+            files["/proc/net/dev"] = NET_DEV_LATER
+            files["/proc/stat"] = STAT_BUSY
+            clock[0] = 1
+            result = sampler.snapshot()
+            self.assertGreater(result["cpu"], 0)
+            self.assertGreater(result["down"], 0)
+            self.assertEqual(reads.count("/proc/net/route"), 1)
+            self.assertEqual(fs.call_count, 1)
+            clock[0] = 5
+            sampler.snapshot()
+            self.assertEqual(reads.count("/proc/net/route"), 2)
+            self.assertEqual(reads.count("/proc/net/ipv6_route"), 2)
+            clock[0] = 30
+            self.assertEqual(sampler.snapshot()["disk"], 30)
+            self.assertEqual(fs.call_count, 2)
+
+    def test_interface_change_refreshes_routes_and_resets_rate(self):
+        clock = [0.0]
+        files = {"/proc/net/dev": NET_DEV, "/proc/net/route": ROUTE}
+        reads = []
+        def reader(path):
+            reads.append(path)
+            return files.get(path, "")
+        sampler = sample.Sampler(reader=reader, now=lambda: clock[0])
+        sampler.snapshot()
+        files["/proc/net/dev"] = NET_DEV_LATER.replace("eth0", "wg0")
+        files["/proc/net/route"] = ROUTE.replace("eth0", "wg0")
+        clock[0] = 1
+        result = sampler.snapshot()
+        self.assertEqual(reads.count("/proc/net/route"), 2)
+        self.assertEqual(sampler.prev_ifaces, ["wg0"])
+        self.assertEqual(result["down"], 0)
+        self.assertEqual(result["up"], 0)
 
 
 class ManifestTests(unittest.TestCase):

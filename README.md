@@ -95,6 +95,8 @@ omarchy plugin remove troy.mini-omatop
 | Root filesystem | `os.statvfs("/")`, used space as a percentage of used plus user-available space |
 | Root disk activity | `/proc/self/mountinfo` identifies the root block device; `/proc/diskstats` reports completed reads and writes |
 
+CPU, RAM, traffic counters, and disk activity update every second. Default routes are cached for at most five seconds and refreshed immediately when interfaces appear or disappear; filesystem capacity is refreshed every 30 seconds. A route change between existing interfaces can take up to five seconds to appear.
+
 No extra packages. Python 3 is used as a long-running sampler inside `omarchy-shell`. Plugins run unsandboxed in that process — read the files before you enable them.
 
 ## Develop
