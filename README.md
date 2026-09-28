@@ -18,6 +18,8 @@ The other three edge strips use the bar's background color. Meter fills use the 
 
 Colors are bound to Omarchy's live theme palette, so a theme switch updates the fills, tracks, peak marks, and bar-matched backgrounds without restarting the shell.
 
+Changes smaller than one logical pixel are accumulated before starting another fill animation. Empty and full readings always apply. Set `MINI_OMATOP_REDUCED_MOTION=1` in the shell environment and restart the shell to use immediate fills without peak fades or disk flashes.
+
 The fills rise smoothly over 280 ms and fall over 900 ms. A thin theme-colored high-water mark stays at the latest peak for 1.4 seconds, then fades over 4.2 seconds. The top CPU bar shows the mark at both ends of its center-out fill; each network half shows one mark at its outer end, and RAM shows it at the upper end.
 
 The top nine pixels of the filesystem usage fill flash when the root filesystem's block device completes reads or writes. If `/` is on a network or virtual filesystem without a local block device, usage still works but the I/O flash is unavailable.
@@ -110,4 +112,11 @@ On an Omarchy machine, after copying into `~/.config/omarchy/plugins/troy.mini-o
 ```sh
 omarchy plugin validate ~/.config/omarchy/plugins/troy.mini-omatop
 omarchy-shell shell rescanPlugins
+```
+
+Animation regression tests use Qt 6 Quick Test with a test-only palette:
+
+```sh
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=basic QT_QUICK_BACKEND=software \
+  /usr/lib/qt6/bin/qmltestrunner -input tests/qml -import tests/qml/imports
 ```

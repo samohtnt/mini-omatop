@@ -6,6 +6,7 @@ Item {
 
   property string meter: "cpu"
   property bool vertical: false
+  property bool reducedMotion: false
   property real cpu: 0
   property real ram: 0
   property real down: 0
@@ -36,6 +37,7 @@ Item {
 
       Rectangle {
         id: meterItem
+        objectName: "meterItem" + index
         required property int index
         readonly property real value: root.networkOnly ? (index === 0 ? root.up : root.down)
           : root.meter === "ram" ? root.ram : root.meter === "disk" ? root.disk : root.cpu
@@ -49,13 +51,28 @@ Item {
         }
         readonly property int pulse: root.diskPulse
         property real displayedAmount: 0
+        property real acceptedAmount: 0
         property real peakAmount: 0
         property real peakOpacity: 0
         property real diskFlashOpacity: 0
         property bool ready: false
 
         function applySample() {
+          var extent = root.vertical ? height : width
+          // Compare against the last accepted target so small changes accumulate.
+          if (extent <= 0)
+            return
+          if (targetAmount !== 0 && targetAmount !== 1
+              && Math.abs(targetAmount - acceptedAmount) * extent < 1)
+            return
+          if (targetAmount === acceptedAmount)
+            return
+          acceptedAmount = targetAmount
           fillAnimation.stop()
+          if (root.reducedMotion) {
+            displayedAmount = targetAmount
+            return
+          }
           fillAnimation.from = displayedAmount
           fillAnimation.to = targetAmount
           fillAnimation.duration = targetAmount > displayedAmount ? 280 : 900
@@ -73,12 +90,29 @@ Item {
           ready = true
           applySample()
         }
+        onWidthChanged: { if (ready) applySample() }
+        onHeightChanged: { if (ready) applySample() }
+        Connections {
+          target: root
+          function onReducedMotionChanged() {
+            if (root.reducedMotion) {
+              fillAnimation.stop()
+              peakHold.stop()
+              peakFade.stop()
+              diskFlash.stop()
+              meterItem.peakOpacity = 0
+              meterItem.diskFlashOpacity = 0
+              meterItem.acceptedAmount = meterItem.targetAmount
+              meterItem.displayedAmount = meterItem.targetAmount
+            }
+          }
+        }
         onTargetAmountChanged: {
           if (ready)
             applySample()
         }
         onPulseChanged: {
-          if (ready && root.meter === "disk" && pulse > 0)
+          if (ready && !root.reducedMotion && root.meter === "disk" && pulse > 0)
             diskFlash.restart()
         }
 

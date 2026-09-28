@@ -9,6 +9,7 @@ Item {
   property var shell: null
   property var manifest: null
   property bool opened: true
+  readonly property bool reducedMotion: Quickshell.env("MINI_OMATOP_REDUCED_MOTION") === "1"
 
   readonly property bool barHidden: !!(root.shell && root.shell.bar && root.shell.bar.barHidden === true)
   readonly property bool showing: opened && !barHidden
@@ -42,7 +43,7 @@ Item {
         WlrLayershell.layer: WlrLayer.Bottom
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         anchors { top: true; left: true; right: true }
-        MeterStrip { anchors.fill: parent; meter: "cpu"; cpu: stats.cpu }
+        MeterStrip { anchors.fill: parent; reducedMotion: root.reducedMotion; meter: "cpu"; cpu: stats.cpu }
       }
     }
   }
@@ -62,7 +63,7 @@ Item {
         WlrLayershell.layer: WlrLayer.Bottom
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         anchors { top: true; bottom: true; left: true }
-        MeterStrip { anchors.fill: parent; meter: "ram"; vertical: true; ram: stats.ram }
+        MeterStrip { anchors.fill: parent; reducedMotion: root.reducedMotion; meter: "ram"; vertical: true; ram: stats.ram }
       }
     }
   }
@@ -82,7 +83,7 @@ Item {
         WlrLayershell.layer: WlrLayer.Bottom
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         anchors { top: true; bottom: true; right: true }
-        MeterStrip { anchors.fill: parent; meter: "disk"; vertical: true; disk: stats.disk; diskPulse: stats.diskPulse }
+        MeterStrip { anchors.fill: parent; reducedMotion: root.reducedMotion; meter: "disk"; vertical: true; disk: stats.disk; diskPulse: stats.diskPulse }
       }
     }
   }
@@ -104,6 +105,7 @@ Item {
         anchors { bottom: true; left: true; right: true }
         MeterStrip {
           anchors.fill: parent
+          reducedMotion: root.reducedMotion
           meter: "network"
           down: stats.down
           up: stats.up
