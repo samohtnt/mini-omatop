@@ -2,12 +2,12 @@
 
 A minimal Omarchy plugin with one meter on each screen edge: CPU at the top, RAM on the left, root filesystem on the right, and network at the bottom. An optional second CPU row shows each logical CPU without adding labels or a separate panel.
 
-```
-                 ← CPU →
-               ┌────────┐
-         RAM ↑  │ screen │  DISK ↑
-               └────────┘
-              ← UP / DOWN →
+```text
+             <--- CPU --->
+             +-----------+
+      RAM ^  |  screen   |  ^ DISK
+             +-----------+
+          <-- Upload | Download -->
 ```
 
 Each monitor gets 1-pixel meters below 1200 logical pixels of height, or 3-pixel meters at 1200 and above. CPU grows outward from the horizontal center; RAM and root filesystem grow upward from the bottom edge. All dimensions are **logical pixels**; physical thickness increases with display scaling.
