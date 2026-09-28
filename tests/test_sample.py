@@ -50,6 +50,16 @@ class ParseTests(unittest.TestCase):
     def test_ram_uses_memavailable(self):
         self.assertAlmostEqual(sample.ram_percent(MEMINFO), 37.5, places=2)
 
+    def test_ram_available_before_total(self):
+        self.assertEqual(sample.ram_percent("MemAvailable: 25 kB\nMemTotal: 100 kB\n"), 75)
+
+    def test_ram_fallback_without_available(self):
+        self.assertEqual(sample.ram_percent("MemTotal: 100 kB\nMemFree: 10 kB\nBuffers: 5 kB\nCached: 15 kB\n"), 70)
+
+    def test_ram_malformed_and_missing_total(self):
+        self.assertEqual(sample.ram_percent("MemTotal: bad\nMemAvailable: 25 kB\n"), 0)
+        self.assertEqual(sample.ram_percent("MemTotal: 100 kB\nMemAvailable: bad\nMemFree: 40 kB\n"), 60)
+
     def test_default_route_beats_loopback(self):
         net = sample.parse_net_dev(NET_DEV)
         ifaces = sample.select_interfaces(sample.parse_default_routes(ROUTE), net)

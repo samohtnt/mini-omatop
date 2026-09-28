@@ -59,6 +59,8 @@ def ram_percent(meminfo_text: str) -> float:
         if len(parts) < 2:
             continue
         key, raw = parts[0], parts[1]
+        if key not in ("MemTotal:", "MemAvailable:", "MemFree:", "Buffers:", "Cached:"):
+            continue
         try:
             value = int(raw)
         except ValueError:
@@ -73,6 +75,8 @@ def ram_percent(meminfo_text: str) -> float:
             buffers = value
         elif key == "Cached:":
             cached = value
+        if total > 0 and available is not None:
+            break
     if total <= 0:
         return 0.0
     if available is None:
