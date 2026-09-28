@@ -25,7 +25,7 @@ Item {
     root.opened = false
   }
 
-  Sampler { id: stats; active: root.opened }
+  Sampler { id: stats; active: root.showing }
 
   Variants {
     model: Quickshell.screens

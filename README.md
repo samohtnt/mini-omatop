@@ -77,7 +77,7 @@ omarchy-shell shell summon troy.mini-omatop '{}'
 ```
 
 If the menubar autohides, the meters hide with it.
-Hiding the plugin explicitly also stops its sampler until it is shown again.
+Hiding the plugin explicitly or hiding the menubar stops its sampler until the meters are shown again.
 
 ## Remove
 

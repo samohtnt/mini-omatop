@@ -59,7 +59,7 @@ Item {
 
   Process {
     id: samplerProc
-    running: true
+    running: root.active
     command: ["/usr/bin/python3", "-u", root.scriptPath]
     stdout: SplitParser {
       onRead: function(line) { root.applyLine(line) }
