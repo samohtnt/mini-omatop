@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import qs.Commons
 
@@ -7,6 +9,7 @@ Item {
   property string meter: "cpu"
   property bool vertical: false
   property bool reducedMotion: false
+  property bool showPeaks: true
   property real cpu: 0
   property real ram: 0
   property real down: 0
@@ -15,6 +18,7 @@ Item {
   property int diskPulse: 0
 
   readonly property bool networkOnly: meter === "network"
+  readonly property bool peaksEnabled: showPeaks && meter !== "disk"
   readonly property color trackColor: networkOnly ? "transparent" : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14)
 
   function fillColor(baseColor, hot, percent) {
@@ -39,10 +43,18 @@ Item {
         id: meterItem
         objectName: "meterItem" + index
         required property int index
-        readonly property real value: root.networkOnly ? (index === 0 ? root.up : root.down)
-          : root.meter === "ram" ? root.ram : root.meter === "disk" ? root.disk : root.cpu
-        readonly property color baseColor: root.meter === "disk" ? Color.muted
-          : root.meter === "ram" || (root.networkOnly && index === 0) ? Color.bar.text : Color.accent
+        readonly property bool upload: root.networkOnly && index === 0
+        readonly property real value: {
+          if (root.networkOnly) return upload ? root.up : root.down
+          if (root.meter === "ram") return root.ram
+          if (root.meter === "disk") return root.disk
+          return root.cpu
+        }
+        readonly property color baseColor: {
+          if (root.meter === "disk") return Color.muted
+          if (root.meter === "ram" || upload) return Color.bar.text
+          return Color.accent
+        }
         readonly property real targetAmount: {
           var amount = Math.max(0, Math.min(1, (Number(value) || 0) / 100))
           if (root.networkOnly && amount > 0 && meterRow.width > 0)
@@ -56,6 +68,13 @@ Item {
         property real peakOpacity: 0
         property real diskFlashOpacity: 0
         property bool ready: false
+
+        function clearPeak() {
+          peakHold.stop()
+          peakFade.stop()
+          peakAmount = 0
+          peakOpacity = 0
+        }
 
         function applySample() {
           var extent = root.vertical ? height : width
@@ -78,7 +97,7 @@ Item {
           fillAnimation.duration = targetAmount > displayedAmount ? 280 : 900
           fillAnimation.start()
 
-          if (root.meter !== "disk" && targetAmount > 0 && (targetAmount > peakAmount || peakOpacity === 0)) {
+          if (root.peaksEnabled && targetAmount > 0 && (targetAmount > peakAmount || peakOpacity === 0)) {
             peakAmount = targetAmount
             peakFade.stop()
             peakOpacity = 0.95
@@ -94,13 +113,15 @@ Item {
         onHeightChanged: { if (ready) applySample() }
         Connections {
           target: root
+          function onPeaksEnabledChanged() {
+            if (!root.peaksEnabled)
+              meterItem.clearPeak()
+          }
           function onReducedMotionChanged() {
             if (root.reducedMotion) {
               fillAnimation.stop()
-              peakHold.stop()
-              peakFade.stop()
+              meterItem.clearPeak()
               diskFlash.stop()
-              meterItem.peakOpacity = 0
               meterItem.diskFlashOpacity = 0
               meterItem.acceptedAmount = meterItem.targetAmount
               meterItem.displayedAmount = meterItem.targetAmount
@@ -151,15 +172,19 @@ Item {
 
         Rectangle {
           id: usageFill
-          x: root.vertical ? 0 : root.networkOnly ? (meterItem.index === 0 ? parent.width - width : 0) : (parent.width - width) / 2
-          y: root.vertical ? parent.height - height : 0
-          width: root.vertical ? parent.width : parent.width * parent.displayedAmount
-          height: root.vertical ? parent.height * parent.displayedAmount : parent.height
-          color: root.fillColor(parent.baseColor, Color.bar.active, parent.displayedAmount * 100)
+          x: {
+            if (root.vertical) return 0
+            if (root.networkOnly) return meterItem.upload ? meterItem.width - width : 0
+            return (meterItem.width - width) / 2
+          }
+          y: root.vertical ? meterItem.height - height : 0
+          width: root.vertical ? meterItem.width : meterItem.width * meterItem.displayedAmount
+          height: root.vertical ? meterItem.height * meterItem.displayedAmount : meterItem.height
+          color: root.fillColor(meterItem.baseColor, Color.bar.active, meterItem.displayedAmount * 100)
 
           Rectangle {
-            width: parent.width
-            height: Math.min(9, parent.height)
+            width: usageFill.width
+            height: Math.min(9, usageFill.height)
             visible: root.meter === "disk"
             color: Color.bar.text
             opacity: meterItem.diskFlashOpacity
@@ -167,29 +192,31 @@ Item {
         }
 
         Rectangle {
-          visible: root.vertical && root.meter !== "disk"
+          visible: root.peaksEnabled && root.vertical
           x: 0
-          y: Math.max(0, Math.min(parent.height - height, parent.height * (1 - parent.peakAmount) - height / 2))
-          width: parent.width
+          y: Math.max(0, Math.min(meterItem.height - height, meterItem.height * (1 - meterItem.peakAmount) - height / 2))
+          width: meterItem.width
           height: 2
           color: Color.bar.text
-          opacity: parent.peakOpacity
+          opacity: meterItem.peakOpacity
         }
 
         Repeater {
-          model: root.vertical ? 0 : root.networkOnly ? 1 : 2
+          model: root.vertical || !root.peaksEnabled ? 0 : root.networkOnly ? 1 : 2
 
           Rectangle {
             required property int index
-            x: Math.max(0, Math.min(parent.width - width,
-                                    root.networkOnly
-                                      ? (meterItem.index === 0 ? parent.width * (1 - parent.peakAmount) : parent.width * parent.peakAmount) - width / 2
-                                      : parent.width * (1 + (index === 0 ? -1 : 1) * parent.peakAmount) / 2 - width / 2))
+            readonly property real position: {
+              if (root.networkOnly)
+                return meterItem.upload ? 1 - meterItem.peakAmount : meterItem.peakAmount
+              return (1 + (index === 0 ? -1 : 1) * meterItem.peakAmount) / 2
+            }
+            x: Math.max(0, Math.min(meterItem.width - width, meterItem.width * position - width / 2))
             y: 0
             width: 2
-            height: parent.height
+            height: meterItem.height
             color: Color.bar.text
-            opacity: parent.peakOpacity
+            opacity: meterItem.peakOpacity
           }
         }
       }

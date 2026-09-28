@@ -205,6 +205,61 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(result["up"], 0)
 
 
+class LogicalCpuTests(unittest.TestCase):
+    def test_counts_and_independent_utilization(self):
+        for count in (1, 2, 8, 16, 64, 128):
+            with self.subTest(count=count):
+                files = {"/proc/stat": "cpu 0 0 0 0\n" + "".join(
+                    f"cpu{i} 0 0 0 0\n" for i in range(count))}
+                reads = []
+                def reader(path):
+                    reads.append(path)
+                    return files.get(path, "")
+                sampler = sample.Sampler(reader=reader)
+                first = sampler.snapshot()
+                self.assertEqual(len(first["cpuLogical"]), count)
+                self.assertTrue(all(cpu["usage"] is None for cpu in first["cpuLogical"]))
+                files["/proc/stat"] = f"cpu 100 0 0 {(count - 1) * 100}\n" + "".join(
+                    f"cpu{i} {100 if i == 0 else 0} 0 0 {0 if i == 0 else 100}\n"
+                    for i in reversed(range(count)))
+                second = sampler.snapshot()
+                self.assertEqual([cpu["id"] for cpu in second["cpuLogical"]], list(range(count)))
+                self.assertEqual([cpu["usage"] for cpu in second["cpuLogical"]], [100] + [0] * (count - 1))
+                self.assertAlmostEqual(second["cpu"], 100 / count, places=2)
+                self.assertEqual(reads.count("/proc/stat"), 2)
+
+    def test_hotplug_reset_and_missing_data(self):
+        files = {"/proc/stat": "cpu 0 0 0 0\ncpu2 100 0 0 100\ncpu10 100 0 0 100\n"}
+        sampler = sample.Sampler(reader=lambda path: files.get(path, ""))
+        sampler.snapshot()
+        files["/proc/stat"] = "cpu 0 0 0 0\ncpu10 200 0 0 100\ncpu1 900 0 0 100\n"
+        self.assertEqual(sampler.snapshot()["cpuLogical"], [{"id": 1, "usage": None}, {"id": 10, "usage": 100}])
+        files["/proc/stat"] = "cpu 0 0 0 0\ncpu2 200 0 0 100\ncpu10 1 0 0 1\n"
+        self.assertTrue(all(cpu["usage"] is None for cpu in sampler.snapshot()["cpuLogical"]))
+        files["/proc/stat"] = ""
+        self.assertEqual(sampler.snapshot()["cpuLogical"], [])
+
+    def test_malformed_lines_and_guest_counters(self):
+        self.assertEqual(sample.parse_logical_cpus(
+            "cpu 100 0 0 0\ncpu0 100 10 20 800 5 1 1 3 50 4\n"
+            "cpu1 bad 0 0 0\ncpu2 1 2\ncpuno 1 2 3 4\nintr 1 2 3 4\n"), {0: (805, 940)})
+
+    def test_unchanged_counters_are_unavailable(self):
+        self.assertEqual(
+            sample.logical_cpu_samples({0: (100, 200)}, {0: (100, 200)}),
+            [{"id": 0, "usage": None}],
+        )
+
+    def test_missing_total_cpu_resets_baseline(self):
+        files = {"/proc/stat": STAT_IDLE}
+        sampler = sample.Sampler(reader=lambda path: files.get(path, ""))
+        sampler.snapshot()
+        files["/proc/stat"] = ""
+        sampler.snapshot()
+        files["/proc/stat"] = STAT_BUSY
+        self.assertEqual(sampler.snapshot()["cpu"], 0)
+
+
 class ManifestTests(unittest.TestCase):
     def test_manifest_contract(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -215,8 +270,9 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(manifest["kinds"], ["panel"])
         self.assertTrue(manifest["keepLoaded"])
         self.assertEqual(manifest["entryPoints"]["panel"], "Panel.qml")
-        for name in ("Panel.qml", "MeterStrip.qml", "Sampler.qml", "sample.py"):
+        for name in ("Panel.qml", "CpuStrip.qml", "MeterStrip.qml", "Sampler.qml", "sample.py"):
             self.assertTrue(os.path.isfile(os.path.join(root, name)), name)
+
 
 class OnceTests(unittest.TestCase):
     def test_once_prints_json(self):

@@ -14,7 +14,25 @@ import os
 import stat
 import sys
 import time
-from typing import Callable, Iterable
+from typing import Callable, Iterable, TypedDict
+
+
+CpuCounters = tuple[int, int]  # Idle ticks, total ticks.
+
+
+class LogicalCpuSample(TypedDict):
+    id: int
+    usage: float | None
+
+
+class Snapshot(TypedDict):
+    cpu: float
+    cpuLogical: list[LogicalCpuSample]
+    ram: float
+    down: float
+    up: float
+    disk: float
+    diskPulse: int
 
 
 def read_text(path: str) -> str:
@@ -25,12 +43,18 @@ def read_text(path: str) -> str:
         return ""
 
 
-def parse_cpu(stat_text: str) -> tuple[int, int] | None:
+def parse_cpu(stat_text: str) -> CpuCounters | None:
     fields = stat_text.partition("\n")[0].split()
     if len(fields) < 5 or fields[0] != "cpu":
         return None
+    return cpu_counters(fields[1:])
+
+
+def cpu_counters(fields: list[str]) -> CpuCounters | None:
+    if len(fields) < 4:
+        return None
     try:
-        values = [int(part) for part in fields[1:]]
+        values = [int(part) for part in fields]
     except ValueError:
         return None
     # guest fields are already included in user and nice.
@@ -39,7 +63,23 @@ def parse_cpu(stat_text: str) -> tuple[int, int] | None:
     return idle, total
 
 
-def cpu_percent(previous: tuple[int, int], current: tuple[int, int]) -> float:
+def parse_logical_cpus(stat_text: str) -> dict[int, CpuCounters]:
+    cpus = {}
+    for line in stat_text.splitlines():
+        # Avoid splitting unrelated records, especially the long interrupt line.
+        if not line.startswith("cpu"):
+            continue
+        fields = line.split()
+        cpu_id = fields[0][3:]
+        if not cpu_id.isdigit():
+            continue
+        counters = cpu_counters(fields[1:])
+        if counters is not None:
+            cpus[int(cpu_id)] = counters
+    return cpus
+
+
+def cpu_percent(previous: CpuCounters, current: CpuCounters) -> float:
     prev_idle, prev_total = previous
     idle, total = current
     total_delta = total - prev_total
@@ -48,6 +88,23 @@ def cpu_percent(previous: tuple[int, int], current: tuple[int, int]) -> float:
     idle_delta = idle - prev_idle
     busy = 1.0 - (idle_delta / total_delta)
     return max(0.0, min(100.0, busy * 100.0))
+
+
+def logical_cpu_samples(
+    previous: dict[int, CpuCounters], current: dict[int, CpuCounters]
+) -> list[LogicalCpuSample]:
+    samples: list[LogicalCpuSample] = []
+    for cpu_id, counters in sorted(current.items()):
+        baseline = previous.get(cpu_id)
+        usage = None
+        # New/returning CPUs and reset counters need a fresh baseline.
+        if baseline is not None:
+            idle, total = counters
+            previous_idle, previous_total = baseline
+            if idle >= previous_idle and total > previous_total:
+                usage = round(cpu_percent(baseline, counters), 2)
+        samples.append({"id": cpu_id, "usage": usage})
+    return samples
 
 
 def ram_percent(meminfo_text: str) -> float:
@@ -102,17 +159,22 @@ def parse_net_dev(text: str) -> dict[str, tuple[int, int]]:
     return out
 
 
+def route_is_usable(raw_flags: str) -> bool:
+    try:
+        flags = int(raw_flags, 16)
+    except ValueError:
+        return False
+    # Linux RTF_UP and RTF_REJECT, shared by IPv4 and IPv6 route records.
+    return bool(flags & 0x0001) and not bool(flags & 0x0200)
+
+
 def parse_default_routes(route_text: str) -> list[str]:
     found: list[str] = []
     for line in route_text.splitlines():
         fields = line.split()
-        if len(fields) < 4 or fields[1] != "00000000":
+        if len(fields) < 8 or fields[1] != "00000000" or fields[7] != "00000000":
             continue
-        try:
-            active = int(fields[3], 16) & 1
-        except ValueError:
-            continue
-        if active and fields[0] not in found:
+        if route_is_usable(fields[3]) and fields[0] not in found:
             found.append(fields[0])
     return found
 
@@ -121,10 +183,11 @@ def parse_ipv6_default_routes(route_text: str) -> list[str]:
     found: list[str] = []
     for line in route_text.splitlines():
         fields = line.split()
-        if len(fields) >= 10 and fields[0] == "0" * 32 and fields[1] == "00":
-            name = fields[-1]
-            if name not in found:
-                found.append(name)
+        if len(fields) < 10 or fields[0] != "0" * 32 or fields[1] != "00":
+            continue
+        name = fields[9]
+        if route_is_usable(fields[8]) and name not in found:
+            found.append(name)
     return found
 
 
@@ -210,7 +273,8 @@ class Sampler:
     def __init__(self, reader: Callable[[str], str] | None = None, now: Callable[[], float] | None = None):
         self.reader = reader or read_text
         self.now = now or time.monotonic
-        self.prev_cpu: tuple[int, int] | None = None
+        self.prev_cpu: CpuCounters | None = None
+        self.prev_logical_cpus: dict[int, CpuCounters] = {}
         self.prev_rx = -1
         self.prev_tx = -1
         self.prev_ifaces: list[str] = []
@@ -226,9 +290,11 @@ class Sampler:
         self.next_filesystem_probe = 0.0
         self.filesystem_usage = 0.0
 
-    def snapshot(self) -> dict[str, float | int]:
+    def snapshot(self) -> Snapshot:
         stamp = self.now()
-        cpu = parse_cpu(self.reader("/proc/stat"))
+        stat_text = self.reader("/proc/stat")
+        cpu = parse_cpu(stat_text)
+        logical_cpus = parse_logical_cpus(stat_text)
         ram = ram_percent(self.reader("/proc/meminfo"))
         net = parse_net_dev(self.reader("/proc/net/dev"))
         interfaces = set(net)
@@ -261,8 +327,10 @@ class Sampler:
         cpu_pct = 0.0
         if cpu and self.prev_cpu:
             cpu_pct = cpu_percent(self.prev_cpu, cpu)
-        if cpu:
-            self.prev_cpu = cpu
+        self.prev_cpu = cpu
+
+        cpu_logical = logical_cpu_samples(self.prev_logical_cpus, logical_cpus)
+        self.prev_logical_cpus = logical_cpus
 
         down_pct = up_pct = 0.0
         elapsed = (stamp - self.prev_stamp) if self.prev_rx >= 0 else 0.0
@@ -280,6 +348,7 @@ class Sampler:
 
         return {
             "cpu": round(cpu_pct, 2),
+            "cpuLogical": cpu_logical,
             "ram": round(ram, 2),
             "down": round(down_pct, 2),
             "up": round(up_pct, 2),
@@ -288,7 +357,7 @@ class Sampler:
         }
 
 
-def emit(sample: dict[str, float | int]) -> None:
+def emit(sample: Snapshot) -> None:
     sys.stdout.write(json.dumps(sample, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 

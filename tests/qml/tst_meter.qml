@@ -56,4 +56,14 @@ TestCase {
     wait(100)
     compare(findChild(meter, "meterItem0").diskFlashOpacity, 0)
   }
+  function test_disabling_peaks_clears_existing_marker() {
+    var meter = make({reducedMotion: false, cpu: 60})
+    var item = findChild(meter, "meterItem0")
+    compare(item.peakOpacity, 0.95)
+    meter.showPeaks = false
+    compare(item.peakOpacity, 0)
+    compare(item.peakAmount, 0)
+    meter.cpu = 80
+    compare(item.peakOpacity, 0)
+  }
 }

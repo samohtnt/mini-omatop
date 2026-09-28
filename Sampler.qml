@@ -7,6 +7,7 @@ Item {
 
   property bool active: true
   property real cpu: 0
+  property var cpuLogical: []
   property real ram: 0
   property real down: 0
   property real up: 0
@@ -39,6 +40,8 @@ Item {
       var sample = JSON.parse(text)
       if (typeof sample.cpu === "number")
         root.cpu = sample.cpu
+      if (Array.isArray(sample.cpuLogical))
+        root.cpuLogical = sample.cpuLogical
       if (typeof sample.ram === "number")
         root.ram = sample.ram
       if (typeof sample.down === "number")
@@ -60,7 +63,8 @@ Item {
   Process {
     id: samplerProc
     running: root.active
-    command: ["/usr/bin/python3", "-u", root.scriptPath]
+    // Ignore inherited Python settings, user packages, and adjacent modules.
+    command: ["/usr/bin/python3", "-I", "-u", root.scriptPath]
     stdout: SplitParser {
       onRead: function(line) { root.applyLine(line) }
     }
